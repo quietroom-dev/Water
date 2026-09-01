@@ -1,118 +1,218 @@
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
-html, body {
+html,
+body {
   margin: 0;
   width: 100%;
   height: 100%;
   overflow: hidden;
+
   background: #07121b;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Noto Sans JP", sans-serif;
+
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
+
   touch-action: manipulation;
 }
 
+body {
+  display: flex;
+  justify-content: center;
+}
+
 #app {
-  position: fixed;
-  inset: 0;
+  position: relative;
+
+  width: 100vw;
+  height: 100dvh;
+
   overflow: hidden;
+
   background: #07121b;
 }
 
-#background,
-#waterCanvas {
+#background {
   position: absolute;
+
   inset: 0;
+
   width: 100%;
   height: 100%;
-}
 
-#background {
   object-fit: cover;
+
   user-select: none;
+  pointer-events: none;
+
   -webkit-user-drag: none;
 }
 
 #waterCanvas {
+  position: absolute;
+
+  inset: 0;
+
+  width: 100%;
+  height: 100%;
+
   pointer-events: none;
 }
 
-.topbar {
+
+/* -------------------------
+   上部UI
+------------------------- */
+
+.top-ui {
+
   position: absolute;
-  z-index: 5;
-  top: max(14px, env(safe-area-inset-top));
+
+  z-index: 20;
+
+  top: max(
+    14px,
+    env(safe-area-inset-top)
+  );
+
   left: 12px;
   right: 12px;
+
   display: flex;
+
   justify-content: space-between;
-  align-items: center;
+
   pointer-events: none;
 }
 
 .button {
+
   pointer-events: auto;
-  border: 1px solid rgba(255,255,255,.22);
+
+  border: 1px solid
+    rgba(255,255,255,.25);
+
   border-radius: 999px;
-  padding: 12px 16px;
+
+  padding: 11px 16px;
+
   color: white;
-  background: rgba(5, 15, 23, .72);
+
+  background:
+    rgba(5,15,23,.70);
+
   backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  font-weight: 700;
+
+  -webkit-backdrop-filter:
+    blur(12px);
+
   font-size: 14px;
-  box-shadow: 0 8px 24px rgba(0,0,0,.22);
-}
 
-button.button,
-label.button {
+  font-weight: 700;
+
   cursor: pointer;
+
+  box-shadow:
+    0 8px 30px
+    rgba(0,0,0,.25);
 }
 
-.controls {
+
+/* -------------------------
+   コントロール
+------------------------- */
+
+.control-panel {
+
   position: absolute;
-  z-index: 6;
+
+  z-index: 20;
+
   left: 12px;
   right: 12px;
-  bottom: max(12px, env(safe-area-inset-bottom));
+
+  bottom: max(
+    12px,
+    env(safe-area-inset-bottom)
+  );
+
   padding: 15px 17px 16px;
-  border: 1px solid rgba(255,255,255,.18);
+
   border-radius: 22px;
+
   color: white;
-  background: rgba(5, 15, 23, .72);
+
+  background:
+    rgba(5,15,23,.72);
+
+  border:
+    1px solid
+    rgba(255,255,255,.18);
+
   backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  box-shadow: 0 10px 30px rgba(0,0,0,.25);
+
+  -webkit-backdrop-filter:
+    blur(14px);
+
+  box-shadow:
+    0 10px 30px
+    rgba(0,0,0,.25);
 }
 
-.water-label {
+.water-title {
+
   display: flex;
+
   justify-content: space-between;
-  align-items: center;
+
   margin-bottom: 9px;
+
   font-weight: 800;
 }
 
 #waterValue {
-  opacity: .82;
-  font-variant-numeric: tabular-nums;
+
+  opacity: .8;
+
+  font-variant-numeric:
+    tabular-nums;
 }
 
 #waterAmount {
+
   width: 100%;
-  accent-color: #e9f8ff;
+
+  accent-color: white;
 }
 
-.hint {
+.description {
+
   margin-top: 8px;
+
   text-align: center;
+
   font-size: 12px;
-  opacity: .78;
+
+  opacity: .75;
 }
+
+
+/* PCで確認するとき */
 
 @media (min-width: 600px) {
+
   #app {
+
     width: 430px;
-    left: 50%;
-    right: auto;
-    transform: translateX(-50%);
-    box-shadow: 0 0 50px rgba(0,0,0,.45);
+
+    box-shadow:
+      0 0 60px
+      rgba(0,0,0,.5);
   }
+
 }
