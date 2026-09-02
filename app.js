@@ -1,25 +1,21 @@
-const app =
-  document.getElementById("app");
-
 const canvas =
-  document.getElementById("waterCanvas");
-
-const ctx =
-  canvas.getContext("2d", {
-    alpha: true
-  });
-
-const background =
-  document.getElementById("background");
-
-const backgroundInput =
   document.getElementById(
-    "backgroundInput"
+    "waterCanvas"
   );
 
-const resetButton =
+const gl =
+  canvas.getContext(
+    "webgl",
+    {
+      alpha: true,
+      antialias: true,
+      premultipliedAlpha: false
+    }
+  );
+
+const background =
   document.getElementById(
-    "resetButton"
+    "background"
   );
 
 const waterAmount =
@@ -32,94 +28,934 @@ const waterValue =
     "waterValue"
   );
 
-
-/* =====================================
-   基本状態
-===================================== */
-
-let width = 0;
-let height = 0;
-
-let pixelRatio = 1;
-
-let lastTime =
-  performance.now();
-
-
-/* =====================================
-   背景画像のバッファ
-===================================== */
-
-let backgroundCanvas = null;
-let backgroundContext = null;
-
-let backgroundURL = null;
-
-
-/* =====================================
-   エフェクト配列
-===================================== */
-
-let waterParticles = [];
-
-let impacts = [];
-
-let droplets = [];
-
-
-/* =====================================
-   リサイズ
-===================================== */
-
-function resizeCanvas() {
-
-  const rect =
-    app.getBoundingClientRect();
-
-  width = rect.width;
-  height = rect.height;
-
-  pixelRatio =
-    Math.min(
-      window.devicePixelRatio || 1,
-      2
-    );
-
-  canvas.width =
-    width * pixelRatio;
-
-  canvas.height =
-    height * pixelRatio;
-
-  canvas.style.width =
-    width + "px";
-
-  canvas.style.height =
-    height + "px";
-
-  ctx.setTransform(
-    pixelRatio,
-    0,
-    0,
-    pixelRatio,
-    0,
-    0
+const backgroundInput =
+  document.getElementById(
+    "backgroundInput"
   );
 
-  createBackgroundBuffer();
+const resetButton =
+  document.getElementById(
+    "resetButton"
+  );
+
+
+if (!gl) {
+
+  alert(
+    "このブラウザではWebGLを利用できません。"
+  );
+
+  throw new Error(
+    "WebGL unavailable"
+  );
 }
 
-window.addEventListener(
-  "resize",
-  resizeCanvas
+
+/* =====================================================
+   WebGL shader
+===================================================== */
+
+const vertexShaderSource = `
+
+attribute vec2 a_position;
+
+varying vec2 v_uv;
+
+void main() {
+
+  v_uv =
+    a_position *
+    0.5 +
+    0.5;
+
+  gl_Position =
+    vec4(
+      a_position,
+      0.0,
+      1.0
+    );
+}
+
+`;
+
+
+const fragmentShaderSource = `
+
+precision highp float;
+
+varying vec2 v_uv;
+
+uniform sampler2D u_background;
+
+uniform float u_time;
+
+uniform float u_water;
+
+uniform vec2 u_resolution;
+
+uniform vec2 u_impact;
+
+uniform float u_impactStrength;
+
+
+/* ---------------------------------
+   hash
+--------------------------------- */
+
+float hash(
+  vec2 p
+) {
+
+  return fract(
+    sin(
+      dot(
+        p,
+        vec2(
+          127.1,
+          311.7
+        )
+      )
+    )
+    *
+    43758.5453123
+  );
+}
+
+
+/* ---------------------------------
+   noise
+--------------------------------- */
+
+float noise(
+  vec2 p
+) {
+
+  vec2 i =
+    floor(p);
+
+  vec2 f =
+    fract(p);
+
+  f =
+    f*f*
+    (3.0-2.0*f);
+
+  float a =
+    hash(i);
+
+  float b =
+    hash(i+vec2(1.0,0.0));
+
+  float c =
+    hash(i+vec2(0.0,1.0));
+
+  float d =
+    hash(i+vec2(1.0,1.0));
+
+  return mix(
+    mix(a,b,f.x),
+    mix(c,d,f.x),
+    f.y
+  );
+}
+
+
+/* ---------------------------------
+   FBM
+--------------------------------- */
+
+float fbm(
+  vec2 p
+) {
+
+  float value = 0.0;
+
+  float amplitude = .5;
+
+  for (
+    int i=0;
+    i<5;
+    i++
+  ) {
+
+    value +=
+      noise(p)
+      *
+      amplitude;
+
+    p *= 2.0;
+
+    amplitude *= .5;
+  }
+
+  return value;
+}
+
+
+/* ---------------------------------
+   水膜
+--------------------------------- */
+
+float waterFilm(
+  vec2 uv
+) {
+
+  vec2 aspect =
+    vec2(
+      u_resolution.x /
+      u_resolution.y,
+      1.0
+    );
+
+  vec2 p =
+    (uv-u_impact)
+    *
+    aspect;
+
+  float dist =
+    length(p);
+
+
+  /*
+    水が画面に
+    ぶつかった中心
+  */
+
+  float radius =
+    .08 +
+    u_impactStrength *
+    .48;
+
+
+  /*
+    不規則な水膜
+  */
+
+  float n =
+    fbm(
+      p*12.0 +
+      vec2(
+        u_time*.35,
+        -u_time*.22
+      )
+    );
+
+
+  float edge =
+    radius +
+    (
+      n-.5
+    )
+    *
+    .09;
+
+
+  float film =
+    smoothstep(
+      edge+.06,
+      edge-.05,
+      dist
+    );
+
+
+  /*
+    中央から薄く広がる
+  */
+
+  float inner =
+    smoothstep(
+      radius*.15,
+      radius*.9,
+      dist
+    );
+
+
+  return
+    film *
+    (.55+.45*inner);
+}
+
+
+/* ---------------------------------
+   水滴
+--------------------------------- */
+
+float droplet(
+  vec2 uv,
+  vec2 center,
+  float radius
+) {
+
+  vec2 aspect =
+    vec2(
+      u_resolution.x /
+      u_resolution.y,
+      1.0
+    );
+
+  vec2 p =
+    (uv-center)
+    *
+    aspect;
+
+
+  float d =
+    length(p);
+
+
+  /*
+    水滴の輪郭を
+    少し不規則にする
+  */
+
+  float n =
+    fbm(
+      p*55.0
+    );
+
+
+  float r =
+    radius +
+    (
+      n-.5
+    )
+    *
+    radius*.18;
+
+
+  return
+    1.0 -
+    smoothstep(
+      r*.72,
+      r,
+      d
+    );
+}
+
+
+/* ---------------------------------
+   大量の水滴フィールド
+--------------------------------- */
+
+float dropletField(
+  vec2 uv
+) {
+
+  float result = 0.0;
+
+
+  /*
+    グリッド状に並べてから
+    ノイズで崩す。
+
+    実際の水滴は
+    完全なランダム配置より
+    こうした方が自然。
+  */
+
+  vec2 grid =
+    floor(
+      uv *
+      vec2(
+        18.0,
+        32.0
+      )
+    );
+
+
+  for (
+    int y=-1;
+    y<=1;
+    y++
+  ) {
+
+    for (
+      int x=-1;
+      x<=1;
+      x++
+    ) {
+
+      vec2 cell =
+        grid +
+        vec2(
+          float(x),
+          float(y)
+        );
+
+
+      float rnd =
+        hash(cell);
+
+
+      vec2 center =
+        (
+          cell +
+          vec2(
+            .5 +
+            (
+              rnd-.5
+            )*.7,
+
+            .5 +
+            (
+              hash(
+                cell+13.4
+              )-.5
+            )*.7
+          )
+        )
+        /
+        vec2(
+          18.0,
+          32.0
+        );
+
+
+      float size =
+        mix(
+          .008,
+          .032,
+          hash(
+            cell+41.3
+          )
+        );
+
+
+      result =
+        max(
+          result,
+          droplet(
+            uv,
+            center,
+            size
+          )
+        );
+    }
+  }
+
+
+  return result;
+}
+
+
+/* ---------------------------------
+   水の屈折
+--------------------------------- */
+
+vec2 refractBackground(
+  vec2 uv,
+  float film,
+  float drops
+) {
+
+  /*
+    水膜の中で
+    背景を局所的に
+    引き伸ばす。
+  */
+
+  vec2 center =
+    u_impact;
+
+
+  vec2 direction =
+    uv-center;
+
+
+  float distance =
+    length(
+      direction
+    );
+
+
+  /*
+    水滴の球面レンズ効果
+  */
+
+  float lens =
+    drops *
+    (
+      1.0 -
+      smoothstep(
+        0.0,
+        .08,
+        distance
+      )
+    );
+
+
+  /*
+    水膜の波
+  */
+
+  float wave =
+    fbm(
+      uv*35.0 +
+      vec2(
+        u_time*.2,
+        u_time*.13
+      )
+    );
+
+
+  vec2 distortion =
+    vec2(
+      wave-.5,
+      fbm(
+        uv*41.0
+        -
+        vec2(
+          u_time*.15
+        )
+      )-.5
+    );
+
+
+  /*
+    強い屈折
+  */
+
+  uv +=
+    direction *
+    lens *
+    .42;
+
+
+  uv +=
+    distortion *
+    film *
+    .055;
+
+
+  /*
+    少し拡大
+  */
+
+  uv =
+    center +
+    (
+      uv-center
+    )
+    *
+    (
+      1.0 -
+      film*.10
+    );
+
+
+  return uv;
+}
+
+
+/* ---------------------------------
+   メイン
+--------------------------------- */
+
+void main() {
+
+  vec2 uv =
+    v_uv;
+
+
+  /*
+    現在の水滴
+  */
+
+  float drops =
+    dropletField(
+      uv
+    )
+    *
+    u_water;
+
+
+  /*
+    水膜
+  */
+
+  float film =
+    waterFilm(
+      uv
+    )
+    *
+    u_water;
+
+
+  /*
+    背景を水越しに
+    屈折させる
+  */
+
+  vec2 refractedUV =
+    refractBackground(
+      uv,
+      film,
+      drops
+    );
+
+
+  /*
+    元画像
+  */
+
+  vec4 color =
+    texture2D(
+      u_background,
+      refractedUV
+    );
+
+
+  /*
+    水の透明感
+  */
+
+  float waterBrightness =
+    film*.12 +
+    drops*.08;
+
+
+  color.rgb +=
+    waterBrightness;
+
+
+  /*
+    水滴の縁
+  */
+
+  float edge =
+    drops -
+    smoothstep(
+      .0,
+      .8,
+      drops
+    );
+
+
+  /*
+    フレネル風ハイライト
+  */
+
+  color.rgb +=
+    vec3(
+      .75,
+      .9,
+      1.0
+    )
+    *
+    drops
+    *
+    .22;
+
+
+  /*
+    水膜の反射
+  */
+
+  float reflection =
+    pow(
+      max(
+        0.0,
+        fbm(
+          uv*70.0
+        )
+      ),
+      4.0
+    );
+
+
+  color.rgb +=
+    vec3(
+      .8,
+      .94,
+      1.0
+    )
+    *
+    reflection
+    *
+    film
+    *
+    .12;
+
+
+  /*
+    透明な青白い水の色
+  */
+
+  color.rgb =
+    mix(
+      color.rgb,
+      color.rgb *
+      vec3(
+        .94,
+        .98,
+        1.02
+      ),
+      film*.25
+    );
+
+
+  /*
+    水滴の境界を
+    明るくする
+  */
+
+  color.rgb +=
+    edge *
+    vec3(
+      .8,
+      .95,
+      1.0
+    )
+    *
+    .45;
+
+
+  gl_FragColor =
+    vec4(
+      color.rgb,
+      1.0
+    );
+}
+
+`;
+
+
+/* =====================================================
+   shader compile
+===================================================== */
+
+function createShader(
+  type,
+  source
+) {
+
+  const shader =
+    gl.createShader(
+      type
+    );
+
+  gl.shaderSource(
+    shader,
+    source
+  );
+
+  gl.compileShader(
+    shader
+  );
+
+
+  if (
+    !gl.getShaderParameter(
+      shader,
+      gl.COMPILE_STATUS
+    )
+  ) {
+
+    console.error(
+      gl.getShaderInfoLog(
+        shader
+      )
+    );
+
+    throw new Error(
+      "Shader compilation failed"
+    );
+  }
+
+
+  return shader;
+}
+
+
+const vertexShader =
+  createShader(
+    gl.VERTEX_SHADER,
+    vertexShaderSource
+  );
+
+
+const fragmentShader =
+  createShader(
+    gl.FRAGMENT_SHADER,
+    fragmentShaderSource
+  );
+
+
+const program =
+  gl.createProgram();
+
+
+gl.attachShader(
+  program,
+  vertexShader
+);
+
+gl.attachShader(
+  program,
+  fragmentShader
+);
+
+gl.linkProgram(
+  program
 );
 
 
-/* =====================================
-   背景をCanvasにコピー
-===================================== */
+if (
+  !gl.getProgramParameter(
+    program,
+    gl.LINK_STATUS
+  )
+) {
 
-function createBackgroundBuffer() {
+  throw new Error(
+    gl.getProgramInfoLog(
+      program
+    )
+  );
+}
+
+
+gl.useProgram(
+  program
+);
+
+
+/* =====================================================
+   Quad
+===================================================== */
+
+const buffer =
+  gl.createBuffer();
+
+gl.bindBuffer(
+  gl.ARRAY_BUFFER,
+  buffer
+);
+
+
+gl.bufferData(
+  gl.ARRAY_BUFFER,
+
+  new Float32Array([
+    -1,-1,
+     1,-1,
+    -1, 1,
+
+    -1, 1,
+     1,-1,
+     1, 1
+  ]),
+
+  gl.STATIC_DRAW
+);
+
+
+const positionLocation =
+  gl.getAttribLocation(
+    program,
+    "a_position"
+  );
+
+
+gl.enableVertexAttribArray(
+  positionLocation
+);
+
+
+gl.vertexAttribPointer(
+  positionLocation,
+  2,
+  gl.FLOAT,
+  false,
+  0,
+  0
+);
+
+
+/* =====================================================
+   uniforms
+===================================================== */
+
+const timeLocation =
+  gl.getUniformLocation(
+    program,
+    "u_time"
+  );
+
+const waterLocation =
+  gl.getUniformLocation(
+    program,
+    "u_water"
+  );
+
+const resolutionLocation =
+  gl.getUniformLocation(
+    program,
+    "u_resolution"
+  );
+
+const impactLocation =
+  gl.getUniformLocation(
+    program,
+    "u_impact"
+  );
+
+const strengthLocation =
+  gl.getUniformLocation(
+    program,
+    "u_impactStrength"
+  );
+
+const backgroundLocation =
+  gl.getUniformLocation(
+    program,
+    "u_background"
+  );
+
+
+/* =====================================================
+   背景テクスチャ
+===================================================== */
+
+const texture =
+  gl.createTexture();
+
+gl.bindTexture(
+  gl.TEXTURE_2D,
+  texture
+);
+
+
+gl.texParameteri(
+  gl.TEXTURE_2D,
+  gl.TEXTURE_WRAP_S,
+  gl.CLAMP_TO_EDGE
+);
+
+gl.texParameteri(
+  gl.TEXTURE_2D,
+  gl.TEXTURE_WRAP_T,
+  gl.CLAMP_TO_EDGE
+);
+
+gl.texParameteri(
+  gl.TEXTURE_2D,
+  gl.TEXTURE_MIN_FILTER,
+  gl.LINEAR
+);
+
+gl.texParameteri(
+  gl.TEXTURE_2D,
+  gl.TEXTURE_MAG_FILTER,
+  gl.LINEAR
+);
+
+
+/* =====================================================
+   画像をGPUへ
+===================================================== */
+
+function uploadBackground() {
 
   if (
     !background.complete ||
@@ -128,67 +964,91 @@ function createBackgroundBuffer() {
     return;
   }
 
-  backgroundCanvas =
-    document.createElement(
-      "canvas"
-    );
 
-  backgroundCanvas.width =
-    Math.floor(width);
+  gl.bindTexture(
+    gl.TEXTURE_2D,
+    texture
+  );
 
-  backgroundCanvas.height =
-    Math.floor(height);
 
-  backgroundContext =
-    backgroundCanvas.getContext(
-      "2d",
-      {
-        willReadFrequently: true
-      }
-    );
+  gl.pixelStorei(
+    gl.UNPACK_FLIP_Y_WEBGL,
+    true
+  );
 
-  const scale =
-    Math.max(
-      width / background.naturalWidth,
-      height / background.naturalHeight
-    );
 
-  const drawWidth =
-    background.naturalWidth * scale;
-
-  const drawHeight =
-    background.naturalHeight * scale;
-
-  backgroundContext.drawImage(
-    background,
-
-    (width - drawWidth) / 2,
-    (height - drawHeight) / 2,
-
-    drawWidth,
-    drawHeight
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGBA,
+    gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    background
   );
 }
 
+
 background.addEventListener(
   "load",
-  createBackgroundBuffer
+  uploadBackground
 );
 
-
-/* =====================================
-   初期化
-===================================== */
-
-resizeCanvas();
+uploadBackground();
 
 
-/* =====================================
+/* =====================================================
+   サイズ
+===================================================== */
+
+function resize() {
+
+  const rect =
+    canvas.getBoundingClientRect();
+
+
+  const ratio =
+    Math.min(
+      window.devicePixelRatio || 1,
+      2
+    );
+
+
+  canvas.width =
+    Math.floor(
+      rect.width * ratio
+    );
+
+
+  canvas.height =
+    Math.floor(
+      rect.height * ratio
+    );
+
+
+  gl.viewport(
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
+}
+
+
+window.addEventListener(
+  "resize",
+  resize
+);
+
+resize();
+
+
+/* =====================================================
    水量
-===================================== */
+===================================================== */
 
 waterValue.textContent =
   waterAmount.value + "%";
+
 
 waterAmount.addEventListener(
   "input",
@@ -196,69 +1056,201 @@ waterAmount.addEventListener(
 
     waterValue.textContent =
       waterAmount.value + "%";
-
   }
 );
 
 
-/* =====================================
-   背景変更
-===================================== */
+/* =====================================================
+   タップ位置
+===================================================== */
 
-backgroundInput.addEventListener(
-  "change",
+let impactX = .5;
+let impactY = .5;
+
+let impactStrength = 0;
+
+
+/* =====================================================
+   水流パーティクル
+===================================================== */
+
+let streamParticles = [];
+
+
+function random(
+  min,
+  max
+) {
+
+  return (
+    min +
+    Math.random() *
+    (max-min)
+  );
+}
+
+
+function shootWater(
+  x,
+  y
+) {
+
+  impactX =
+    x / canvas.clientWidth;
+
+  impactY =
+    1 -
+    y / canvas.clientHeight;
+
+
+  impactStrength =
+    Number(
+      waterAmount.value
+    ) / 100;
+
+
+  /*
+    実際の水流を
+    大量に生成
+  */
+
+  const amount =
+    Number(
+      waterAmount.value
+    );
+
+
+  const count =
+    Math.floor(
+      90 +
+      amount * 2.5
+    );
+
+
+  const sourceX =
+    canvas.clientWidth *
+    .5;
+
+
+  const sourceY =
+    canvas.clientHeight *
+    .34;
+
+
+  const dx =
+    x-sourceX;
+
+
+  const dy =
+    y-sourceY;
+
+
+  const distance =
+    Math.hypot(
+      dx,
+      dy
+    );
+
+
+  const nx =
+    dx /
+    distance;
+
+
+  const ny =
+    dy /
+    distance;
+
+
+  for (
+    let i=0;
+    i<count;
+    i++
+  ) {
+
+    const progress =
+      Math.random();
+
+
+    const spread =
+      random(
+        -1,
+        1
+      )
+      *
+      (
+        3 +
+        amount*.09
+      )
+      *
+      progress;
+
+
+    streamParticles.push({
+
+      x:
+        sourceX +
+        dx *
+        progress,
+
+      y:
+        sourceY +
+        dy *
+        progress,
+
+      vx:
+        nx *
+        random(
+          550,
+          850
+        ),
+
+      vy:
+        ny *
+        random(
+          550,
+          850
+        ),
+
+      size:
+        random(
+          1,
+          5
+        ),
+
+      life:
+        random(
+          .25,
+          .75
+        )
+    });
+  }
+}
+
+
+/* =====================================================
+   タップ
+===================================================== */
+
+canvas.addEventListener(
+  "pointerdown",
   event => {
 
-    const file =
-      event.target.files?.[0];
-
-    if (!file) {
-      return;
-    }
-
-    if (backgroundURL) {
-
-      URL.revokeObjectURL(
-        backgroundURL
-      );
-    }
-
-    backgroundURL =
-      URL.createObjectURL(file);
-
-    background.src =
-      backgroundURL;
-  }
-);
-
-
-/* =====================================
-   リセット
-===================================== */
-
-resetButton.addEventListener(
-  "click",
-  () => {
-
-    waterParticles = [];
-    impacts = [];
-    droplets = [];
-
-    ctx.clearRect(
-      0,
-      0,
-      width,
-      height
+    shootWater(
+      event.clientX,
+      event.clientY
     );
   }
 );
 
 
-/* =====================================
-   タップ
-===================================== */
+/*
+  実際にはcanvasが
+  pointer-events:noneなので
+  documentで拾う。
+*/
 
-app.addEventListener(
+document.addEventListener(
   "pointerdown",
   event => {
 
@@ -273,1210 +1265,184 @@ app.addEventListener(
       return;
     }
 
+
     const rect =
-      app.getBoundingClientRect();
+      canvas.getBoundingClientRect();
 
-    const x =
-      event.clientX - rect.left;
-
-    const y =
-      event.clientY - rect.top;
 
     shootWater(
-      x,
-      y,
-      Number(waterAmount.value)
+      event.clientX -
+        rect.left,
+
+      event.clientY -
+        rect.top
     );
   }
 );
 
 
-/* =====================================
-   乱数
-===================================== */
+/* =====================================================
+   背景変更
+===================================================== */
 
-function random(min, max) {
-
-  return (
-    min +
-    Math.random() *
-    (max - min)
-  );
-}
+let backgroundURL = null;
 
 
-/* =====================================
-   正規分布
-===================================== */
+backgroundInput.addEventListener(
+  "change",
+  event => {
 
-function gaussian() {
-
-  let u = 0;
-  let v = 0;
-
-  while (!u) {
-    u = Math.random();
-  }
-
-  while (!v) {
-    v = Math.random();
-  }
-
-  return Math.sqrt(
-    -2 * Math.log(u)
-  ) *
-    Math.cos(
-      Math.PI * 2 * v
-    );
-}
+    const file =
+      event.target.files?.[0];
 
 
-/* =====================================
-   水を飛ばす
-===================================== */
-
-function shootWater(
-  targetX,
-  targetY,
-  amount
-) {
-
-  /*
-    水を出す位置。
-
-    写真の中央奥から
-    水が飛んでくる。
-  */
-
-  const sourceX =
-    width * 0.50;
-
-  const sourceY =
-    height * 0.38;
+    if (!file) {
+      return;
+    }
 
 
-  const dx =
-    targetX - sourceX;
+    if (backgroundURL) {
 
-  const dy =
-    targetY - sourceY;
-
-  const distance =
-    Math.hypot(dx, dy) || 1;
+      URL.revokeObjectURL(
+        backgroundURL
+      );
+    }
 
 
-  const nx =
-    dx / distance;
-
-  const ny =
-    dy / distance;
-
-
-  /*
-    水流に対して垂直な方向
-  */
-
-  const perpendicularX =
-    -ny;
-
-  const perpendicularY =
-    nx;
-
-
-  /*
-    水量によって
-    水流の太さを変える
-  */
-
-  const streamWidth =
-    5 + amount * 0.11;
-
-
-  const particleCount =
-    Math.floor(
-      45 + amount * 0.8
-    );
-
-
-  /* -----------------------------
-     メインの水流
-  ----------------------------- */
-
-  for (
-    let i = 0;
-    i < particleCount;
-    i++
-  ) {
-
-    const progress =
-      Math.random() * 0.94;
-
-
-    const side =
-      gaussian() *
-      streamWidth *
-      (
-        0.10 +
-        progress * 1.55
+    backgroundURL =
+      URL.createObjectURL(
+        file
       );
 
 
-    const speed =
-      610 +
-      amount * 3.2 +
-      random(-80, 80);
+    background.onload =
+      () => {
+
+        uploadBackground();
+      };
 
 
-    waterParticles.push({
-
-      x:
-        sourceX +
-        dx * progress +
-        perpendicularX * side,
-
-      y:
-        sourceY +
-        dy * progress +
-        perpendicularY * side,
-
-      vx:
-        nx * speed +
-        perpendicularX *
-        random(-28,28),
-
-      vy:
-        ny * speed +
-        perpendicularY *
-        random(-28,28),
-
-      radius:
-        random(1.7,4.6) *
-        (
-          0.72 +
-          amount / 125
-        ),
-
-      life:
-        random(.28,.58),
-
-      maxLife:
-        .62,
-
-      angle:
-        Math.atan2(
-          ny,
-          nx
-        ),
-
-      drag:
-        .965
-    });
+    background.src =
+      backgroundURL;
   }
+);
 
 
-  /* -----------------------------
-     水が画面に衝突
-  ----------------------------- */
+/* =====================================================
+   リセット
+===================================================== */
 
-  impacts.push({
+resetButton.addEventListener(
+  "click",
+  () => {
 
-    x: targetX,
+    impactStrength = 0;
 
-    y: targetY,
+    streamParticles = [];
 
-    age: 0,
-
-    life: 1.0,
-
-    maxRadius:
-      24 +
-      amount * .72,
-
-    strength:
-      amount / 100
-  });
-
-
-  /* -----------------------------
-     画面表面の水滴
-  ----------------------------- */
-
-  const dropletCount =
-    Math.floor(
-      4 +
-      amount * .14
-    );
-
-
-  for (
-    let i = 0;
-    i < dropletCount;
-    i++
-  ) {
-
-    droplets.push({
-
-      x:
-        targetX +
-        random(-20,20) *
-        (
-          .5 +
-          amount / 100
-        ),
-
-      y:
-        targetY +
-        random(-16,16) *
-        (
-          .5 +
-          amount / 100
-        ),
-
-      radius:
-        random(3.5,10) *
-        (
-          .68 +
-          amount / 150
-        ),
-
-      velocityX:
-        random(-1.5,1.5),
-
-      velocityY:
-        random(2,10),
-
-      life:
-        random(1.5,3.8),
-
-      maxLife:
-        3.8
-    });
   }
-}
+);
 
 
-/* =====================================
-   水流を描画
-===================================== */
-
-function drawWaterParticle(
-  particle
-) {
-
-  const alpha =
-    Math.max(
-      0,
-      particle.life /
-      particle.maxLife
-    );
-
-
-  ctx.save();
-
-  ctx.translate(
-    particle.x,
-    particle.y
-  );
-
-  ctx.rotate(
-    particle.angle
-  );
-
-
-  const gradient =
-    ctx.createLinearGradient(
-      -particle.radius * 4,
-      0,
-      particle.radius * 5,
-      0
-    );
-
-
-  gradient.addColorStop(
-    0,
-    `rgba(
-      255,
-      255,
-      255,
-      ${alpha * .08}
-    )`
-  );
-
-
-  gradient.addColorStop(
-    .25,
-    `rgba(
-      220,
-      245,
-      255,
-      ${alpha * .35}
-    )`
-  );
-
-
-  gradient.addColorStop(
-    .52,
-    `rgba(
-      255,
-      255,
-      255,
-      ${alpha * .88}
-    )`
-  );
-
-
-  gradient.addColorStop(
-    1,
-    "rgba(150,210,235,0)"
-  );
-
-
-  ctx.fillStyle =
-    gradient;
-
-
-  ctx.beginPath();
-
-  ctx.ellipse(
-    0,
-    0,
-
-    particle.radius * 4.5,
-    particle.radius,
-
-    0,
-    0,
-    Math.PI * 2
-  );
-
-  ctx.fill();
-
-  ctx.restore();
-}
-
-
-/* =====================================
-   衝突
-===================================== */
-
-function drawImpact(
-  impact
-) {
-
-  const progress =
-    impact.age /
-    impact.life;
-
-
-  const radius =
-    3 +
-    (
-      impact.maxRadius - 3
-    ) *
-    Math.min(
-      1,
-      progress
-    );
-
-
-  const alpha =
-    (
-      1 - progress
-    ) *
-    impact.strength;
-
-
-  /*
-    水膜
-  */
-
-  const gradient =
-    ctx.createRadialGradient(
-      impact.x,
-      impact.y,
-      0,
-
-      impact.x,
-      impact.y,
-      radius * 1.3
-    );
-
-
-  gradient.addColorStop(
-    0,
-    `rgba(
-      220,
-      246,
-      255,
-      ${.16 * alpha}
-    )`
-  );
-
-
-  gradient.addColorStop(
-    .5,
-    `rgba(
-      200,
-      232,
-      245,
-      ${.06 * alpha}
-    )`
-  );
-
-
-  gradient.addColorStop(
-    1,
-    "rgba(150,210,235,0)"
-  );
-
-
-  ctx.fillStyle =
-    gradient;
-
-
-  ctx.beginPath();
-
-  ctx.arc(
-    impact.x,
-    impact.y,
-    radius * 1.3,
-    0,
-    Math.PI * 2
-  );
-
-  ctx.fill();
-
-
-  /*
-    放射状の飛沫
-  */
-
-  ctx.save();
-
-  ctx.translate(
-    impact.x,
-    impact.y
-  );
-
-
-  const rayCount =
-    14 +
-    Math.floor(
-      impact.strength * 10
-    );
-
-
-  for (
-    let i = 0;
-    i < rayCount;
-    i++
-  ) {
-
-    const angle =
-      i *
-      Math.PI *
-      2 /
-      rayCount;
-
-
-    const length =
-      radius *
-      random(.35,.95);
-
-
-    ctx.strokeStyle =
-      `rgba(
-        245,
-        253,
-        255,
-        ${.22 * alpha}
-      )`;
-
-
-    ctx.lineWidth =
-      random(.45,1.35);
-
-
-    ctx.beginPath();
-
-    ctx.moveTo(
-      Math.cos(angle) *
-      radius *
-      .08,
-
-      Math.sin(angle) *
-      radius *
-      .08
-    );
-
-
-    ctx.lineTo(
-      Math.cos(angle) *
-      length,
-
-      Math.sin(angle) *
-      length
-    );
-
-    ctx.stroke();
-  }
-
-
-  ctx.restore();
-}
-
-
-/* =====================================
-   ★ 水滴の屈折
-===================================== */
-
-function drawDroplet(
-  drop
-) {
-
-  if (
-    !backgroundCanvas ||
-    !backgroundContext
-  ) {
-    return;
-  }
-
-
-  const fade =
-    Math.min(
-      1,
-      drop.life / .45
-    );
-
-
-  const radius =
-    drop.radius;
-
-
-  const size =
-    Math.ceil(
-      radius * 2.7
-    );
-
-
-  const startX =
-    Math.max(
-      0,
-      Math.floor(
-        drop.x - size
-      )
-    );
-
-
-  const startY =
-    Math.max(
-      0,
-      Math.floor(
-        drop.y - size
-      )
-    );
-
-
-  const endX =
-    Math.min(
-      width,
-      Math.ceil(
-        drop.x + size
-      )
-    );
-
-
-  const endY =
-    Math.min(
-      height,
-      Math.ceil(
-        drop.y + size
-      )
-    );
-
-
-  const localWidth =
-    endX - startX;
-
-  const localHeight =
-    endY - startY;
-
-
-  if (
-    localWidth < 1 ||
-    localHeight < 1
-  ) {
-    return;
-  }
-
-
-  /*
-    元の背景を取得
-  */
-
-  const source =
-    backgroundContext.getImageData(
-      startX,
-      startY,
-      localWidth,
-      localHeight
-    );
-
-
-  const output =
-    ctx.createImageData(
-      localWidth,
-      localHeight
-    );
-
-
-  const centerX =
-    drop.x - startX;
-
-  const centerY =
-    drop.y - startY;
-
-
-  /*
-    水滴内部の画像を
-    レンズのように歪ませる
-  */
-
-  for (
-    let y = 0;
-    y < localHeight;
-    y++
-  ) {
-
-    for (
-      let x = 0;
-      x < localWidth;
-      x++
-    ) {
-
-      const dx =
-        x - centerX;
-
-      const dy =
-        y - centerY;
-
-
-      const distance =
-        Math.hypot(
-          dx,
-          dy
-        );
-
-
-      const normalized =
-        distance /
-        radius;
-
-
-      /*
-        水滴の外
-      */
-
-      if (
-        normalized > 1.18
-      ) {
-        continue;
-      }
-
-
-      /*
-        球状レンズの変形量
-      */
-
-      const edge =
-        Math.min(
-          1,
-          normalized
-        );
-
-
-      const lens =
-        (
-          1 -
-          edge * edge
-        ) *
-        radius *
-        .34;
-
-
-      /*
-        背景を中心方向へ
-        少し引き込む。
-
-        これが
-        「水滴越しに景色が歪む」
-        部分。
-      */
-
-      const sampleX =
-        drop.x +
-        dx *
-        (
-          1 -
-          .38 *
-          (1-edge)
-        ) -
-        dx *
-        lens /
-        Math.max(radius,1) *
-        .16;
-
-
-      const sampleY =
-        drop.y +
-        dy *
-        (
-          1 -
-          .38 *
-          (1-edge)
-        ) -
-        dy *
-        lens /
-        Math.max(radius,1) *
-        .16;
-
-
-      const imageX =
-        Math.max(
-          0,
-          Math.min(
-            backgroundCanvas.width - 1,
-            Math.floor(sampleX)
-          )
-        );
-
-
-      const imageY =
-        Math.max(
-          0,
-          Math.min(
-            backgroundCanvas.height - 1,
-            Math.floor(sampleY)
-          )
-        );
-
-
-      const sourceIndex =
-        (
-          imageY *
-          backgroundCanvas.width +
-          imageX
-        ) * 4;
-
-
-      const outputIndex =
-        (
-          y *
-          localWidth +
-          x
-        ) * 4;
-
-
-      /*
-        水滴の中心ほど
-        少し濃くする
-      */
-
-      const opacity =
-        Math.max(
-          0,
-
-          (
-            normalized < .92
-              ? .27
-              : .10
-          )
-
-          *
-
-          fade
-
-          *
-
-          (
-            1 -
-            Math.max(
-              0,
-              normalized - .82
-            ) / .36
-          )
-        );
-
-
-      output.data[
-        outputIndex
-      ] =
-        Math.min(
-          255,
-          source.data[
-            sourceIndex
-          ] + 8
-        );
-
-
-      output.data[
-        outputIndex + 1
-      ] =
-        Math.min(
-          255,
-          source.data[
-            sourceIndex + 1
-          ] + 12
-        );
-
-
-      output.data[
-        outputIndex + 2
-      ] =
-        Math.min(
-          255,
-          source.data[
-            sourceIndex + 2
-          ] + 16
-        );
-
-
-      output.data[
-        outputIndex + 3
-      ] =
-        Math.floor(
-          opacity * 255
-        );
-    }
-  }
-
-
-  /*
-    屈折した背景を描画
-  */
-
-  ctx.putImageData(
-    output,
-    startX,
-    startY
-  );
-
-
-  /*
-    水滴の光
-  */
-
-  const highlight =
-    ctx.createRadialGradient(
-
-      drop.x -
-        radius * .34,
-
-      drop.y -
-        radius * .42,
-
-      .1,
-
-      drop.x,
-      drop.y,
-
-      radius * 1.1
-    );
-
-
-  highlight.addColorStop(
-    0,
-    `rgba(
-      255,
-      255,
-      255,
-      ${.72 * fade}
-    )`
-  );
-
-
-  highlight.addColorStop(
-    .09,
-    `rgba(
-      255,
-      255,
-      255,
-      ${.24 * fade}
-    )`
-  );
-
-
-  highlight.addColorStop(
-    .34,
-    "rgba(255,255,255,0)"
-  );
-
-
-  highlight.addColorStop(
-    .82,
-    `rgba(
-      255,
-      255,
-      255,
-      ${.08 * fade}
-    )`
-  );
-
-
-  highlight.addColorStop(
-    1,
-    "rgba(120,200,225,0)"
-  );
-
-
-  ctx.fillStyle =
-    highlight;
-
-
-  ctx.beginPath();
-
-  ctx.ellipse(
-    drop.x,
-    drop.y,
-
-    radius,
-    radius * 1.13,
-
-    0,
-    0,
-    Math.PI * 2
-  );
-
-  ctx.fill();
-
-
-  /*
-    水滴の薄い輪郭
-  */
-
-  ctx.strokeStyle =
-    `rgba(
-      255,
-      255,
-      255,
-      ${.28 * fade}
-    )`;
-
-  ctx.lineWidth =
-    .7;
-
-
-  ctx.beginPath();
-
-  ctx.ellipse(
-    drop.x,
-    drop.y,
-
-    radius * .86,
-    radius,
-
-    0,
-    0,
-    Math.PI * 2
-  );
-
-  ctx.stroke();
-}
-
-
-/* =====================================
+/* =====================================================
    アニメーション
-===================================== */
+===================================================== */
 
-function animate(
+let startTime =
+  performance.now();
+
+
+function render(
   currentTime
 ) {
 
-  const delta =
-    Math.min(
-      .033,
-      (
-        currentTime -
-        lastTime
-      ) / 1000
-    );
+  const time =
+    (
+      currentTime -
+      startTime
+    ) / 1000;
 
 
-  lastTime =
-    currentTime;
+  /*
+    水の衝突を
+    徐々に消す
+  */
+
+  impactStrength *= .985;
 
 
-  ctx.clearRect(
-    0,
-    0,
-    width,
-    height
+  gl.useProgram(
+    program
   );
 
 
-  /* -----------------------------
-     水流
-  ----------------------------- */
-
-  for (
-    let i =
-      waterParticles.length - 1;
-
-    i >= 0;
-
-    i--
-  ) {
-
-    const particle =
-      waterParticles[i];
+  gl.uniform1f(
+    timeLocation,
+    time
+  );
 
 
-    particle.life -=
-      delta;
+  gl.uniform1f(
+    waterLocation,
+    Number(
+      waterAmount.value
+    ) / 100
+  );
 
 
-    if (
-      particle.life <= 0
-    ) {
+  gl.uniform2f(
+    resolutionLocation,
 
-      waterParticles.splice(
-        i,
-        1
-      );
-
-      continue;
-    }
+    canvas.width,
+    canvas.height
+  );
 
 
-    particle.x +=
-      particle.vx *
-      delta;
+  gl.uniform2f(
+    impactLocation,
 
-    particle.y +=
-      particle.vy *
-      delta;
-
-
-    particle.vx *=
-      Math.pow(
-        particle.drag,
-        delta * 60
-      );
+    impactX,
+    impactY
+  );
 
 
-    particle.vy *=
-      Math.pow(
-        particle.drag,
-        delta * 60
-      );
+  gl.uniform1f(
+    strengthLocation,
+
+    impactStrength
+  );
 
 
-    drawWaterParticle(
-      particle
-    );
-  }
+  gl.activeTexture(
+    gl.TEXTURE0
+  );
 
 
-  /* -----------------------------
-     衝突
-  ----------------------------- */
-
-  for (
-    let i =
-      impacts.length - 1;
-
-    i >= 0;
-
-    i--
-  ) {
-
-    const impact =
-      impacts[i];
+  gl.bindTexture(
+    gl.TEXTURE_2D,
+    texture
+  );
 
 
-    impact.age +=
-      delta;
+  gl.uniform1i(
+    backgroundLocation,
+    0
+  );
 
 
-    if (
-      impact.age >
-      impact.life
-    ) {
-
-      impacts.splice(
-        i,
-        1
-      );
-
-      continue;
-    }
-
-
-    drawImpact(
-      impact
-    );
-  }
-
-
-  /* -----------------------------
-     水滴
-  ----------------------------- */
-
-  for (
-    let i =
-      droplets.length - 1;
-
-    i >= 0;
-
-    i--
-  ) {
-
-    const drop =
-      droplets[i];
-
-
-    drop.life -=
-      delta;
-
-
-    if (
-      drop.life <= 0
-    ) {
-
-      droplets.splice(
-        i,
-        1
-      );
-
-      continue;
-    }
-
-
-    /*
-      重力で少し下へ
-    */
-
-    drop.x +=
-      drop.velocityX *
-      delta;
-
-    drop.y +=
-      drop.velocityY *
-      delta;
-
-
-    drawDroplet(
-      drop
-    );
-  }
+  gl.drawArrays(
+    gl.TRIANGLES,
+    0,
+    6
+  );
 
 
   requestAnimationFrame(
-    animate
+    render
   );
 }
 
 
 requestAnimationFrame(
-  animate
+  render
 );
