@@ -2,12 +2,15 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport"
-        content="width=device-width,
-        initial-scale=1,
-        maximum-scale=1,
-        user-scalable=no,
-        viewport-fit=cover">
+
+  <meta
+    name="viewport"
+    content="width=device-width,
+    initial-scale=1,
+    maximum-scale=1,
+    user-scalable=no,
+    viewport-fit=cover"
+  >
 
   <title>Water Splash</title>
 
@@ -18,13 +21,14 @@
 
 <div id="app">
 
-  <!-- 背景 -->
-  <img id="background" src="background.png" alt="">
+  <img
+    id="background"
+    src="background.png"
+    alt=""
+  >
 
-  <!-- 水のエフェクト -->
   <canvas id="waterCanvas"></canvas>
 
-  <!-- 上部UI -->
   <div class="top-ui">
 
     <label class="button">
@@ -37,13 +41,15 @@
       >
     </label>
 
-    <button id="resetButton" class="button">
+    <button
+      id="resetButton"
+      class="button"
+    >
       リセット
     </button>
 
   </div>
 
-  <!-- 水量 -->
   <div class="control-panel">
 
     <div class="water-title">
@@ -59,8 +65,8 @@
       value="55"
     >
 
-    <div class="description">
-      画面をタップしてください
+    <div class="hint">
+      画面をタップすると水が飛んできます
     </div>
 
   </div>
