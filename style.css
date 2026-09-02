@@ -5,11 +5,14 @@
 html,
 body {
   margin: 0;
+  padding: 0;
+
   width: 100%;
   height: 100%;
+
   overflow: hidden;
 
-  background: #07121b;
+  background: #050b10;
 
   font-family:
     -apple-system,
@@ -34,7 +37,7 @@ body {
 
   overflow: hidden;
 
-  background: #07121b;
+  background: #050b10;
 }
 
 #background {
@@ -47,8 +50,9 @@ body {
 
   object-fit: cover;
 
-  user-select: none;
   pointer-events: none;
+
+  user-select: none;
 
   -webkit-user-drag: none;
 }
@@ -65,27 +69,29 @@ body {
 }
 
 
-/* -------------------------
-   上部UI
-------------------------- */
+/* =========================
+   上部
+========================= */
 
 .top-ui {
 
   position: absolute;
 
-  z-index: 20;
+  z-index: 10;
 
-  top: max(
-    14px,
-    env(safe-area-inset-top)
-  );
+  top:
+    max(
+      14px,
+      env(safe-area-inset-top)
+    );
 
   left: 12px;
   right: 12px;
 
   display: flex;
 
-  justify-content: space-between;
+  justify-content:
+    space-between;
 
   pointer-events: none;
 }
@@ -95,27 +101,27 @@ body {
   pointer-events: auto;
 
   border: 1px solid
-    rgba(255,255,255,.25);
+    rgba(255,255,255,.22);
 
   border-radius: 999px;
 
-  padding: 11px 16px;
+  padding:
+    11px 16px;
 
   color: white;
 
   background:
-    rgba(5,15,23,.70);
+    rgba(0,0,0,.48);
 
-  backdrop-filter: blur(12px);
+  backdrop-filter:
+    blur(16px);
 
   -webkit-backdrop-filter:
-    blur(12px);
+    blur(16px);
 
   font-size: 14px;
 
   font-weight: 700;
-
-  cursor: pointer;
 
   box-shadow:
     0 8px 30px
@@ -123,52 +129,52 @@ body {
 }
 
 
-/* -------------------------
-   コントロール
-------------------------- */
+/* =========================
+   水量
+========================= */
 
 .control-panel {
 
   position: absolute;
 
-  z-index: 20;
+  z-index: 10;
 
   left: 12px;
   right: 12px;
 
-  bottom: max(
-    12px,
-    env(safe-area-inset-bottom)
-  );
+  bottom:
+    max(
+      12px,
+      env(safe-area-inset-bottom)
+    );
 
-  padding: 15px 17px 16px;
+  padding:
+    15px 17px 16px;
 
   border-radius: 22px;
 
-  color: white;
-
   background:
-    rgba(5,15,23,.72);
+    rgba(0,0,0,.48);
 
   border:
     1px solid
-    rgba(255,255,255,.18);
+    rgba(255,255,255,.16);
 
-  backdrop-filter: blur(14px);
+  backdrop-filter:
+    blur(16px);
 
   -webkit-backdrop-filter:
-    blur(14px);
+    blur(16px);
 
-  box-shadow:
-    0 10px 30px
-    rgba(0,0,0,.25);
+  color: white;
 }
 
 .water-title {
 
   display: flex;
 
-  justify-content: space-between;
+  justify-content:
+    space-between;
 
   margin-bottom: 9px;
 
@@ -176,21 +182,14 @@ body {
 }
 
 #waterValue {
-
   opacity: .8;
-
-  font-variant-numeric:
-    tabular-nums;
 }
 
 #waterAmount {
-
   width: 100%;
-
-  accent-color: white;
 }
 
-.description {
+.hint {
 
   margin-top: 8px;
 
@@ -198,11 +197,9 @@ body {
 
   font-size: 12px;
 
-  opacity: .75;
+  opacity: .72;
 }
 
-
-/* PCで確認するとき */
 
 @media (min-width: 600px) {
 
@@ -211,8 +208,8 @@ body {
     width: 430px;
 
     box-shadow:
-      0 0 60px
-      rgba(0,0,0,.5);
+      0 0 70px
+      rgba(0,0,0,.6);
   }
 
 }
